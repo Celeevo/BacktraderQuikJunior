@@ -508,8 +508,8 @@ class QKBroker(with_metaclass(MetaQKBroker, BrokerBase)):
         '''
         Проверяет наличие в Quik связки "код класса" - "инструмент",
         останавливает работу робота, если такая связка не найдена.
-        Вход - имя (имена) источника данных, запрошенное в основном
-        скрипте робота. Строка или iterable (список или кортеж строк)
+        Вход - имя источника данных, запрошенное в основном
+        скрипте робота, проверка на строку и формат.
         Выход - сообщение об успешной проверке и продолжение работы 
         или сообщение об ошибке и остановка скрипта робота.
         '''
@@ -520,14 +520,17 @@ class QKBroker(with_metaclass(MetaQKBroker, BrokerBase)):
         try:
             cls, sec = data_name.split('.', 1)
         except ValueError:
-            raise ValueError(f'Имя инструмента должно быть в формате <CLASS.SEC>, получено {data_name}')
+            raise ValueError(f'Имя инструмента должно быть в формате '
+                             f'<CLASS.SEC>, получено {data_name}')
 
         if cls not in self.store.provider.classes:
-            raise ValueError(f'Класс (режим торгов) с идентификатором {cls} не найден в ваших счетах. '
+            raise ValueError(f'Класс (режим торгов) с идентификатором {cls} '
+                             f'не найден в ваших счетах. '
                              f'Проверьте имя источника данных {data_name}')
 
         if sec not in self.store.provider.classes[cls]:
-            also = ', '.join(sorted(self.store.provider.classes[cls])) or 'нет доступных'
+            also = (', '.join(sorted(self.store.provider.classes[cls])) or
+                    'нет доступных')
             raise ValueError(
                 f'Инструмент {sec} не торгуется в режиме торгов {cls}, '
                 f'в нем доступны следующие инструменты: {also}'
@@ -535,7 +538,8 @@ class QKBroker(with_metaclass(MetaQKBroker, BrokerBase)):
 
         # доходит до сюда → всё ок
         self.store.provider.get_symbol_info(cls, sec)
-        logger.info(f'Запрошен источник данных {data_name}. Инструмент {sec} найден в Quik Junior. Работаем!)')
+        logger.info(f'Запрошен источник данных {data_name}. Инструмент {sec} '
+                    f'найден в Quik Junior. Работаем!)')
         logger.debug(f'Информация о счетах на аккаунте Quik - {self.accounts = }')
             
     def get_price_step(self, cls, sec):  # Шаг цены

@@ -47,12 +47,14 @@ class CustomSizer(bt.Sizer):
             bayer_go = self.broker.get_bayer_go(class_code, sec_code)
             # ГО продавца
             seller_go = self.broker.get_seller_go(class_code, sec_code)
+            logger.info(f'{price_step = }, {cost_of_price_step = }, '
+                        f'{bayer_go = }, {seller_go = }')
         else:
             # Для акций size должен быть кратен лоту, вот размер лота
             lot_size = self.broker.store.provider.symbols[(class_code, sec_code)]['lot_size']
 
         # Ниже пользовательская логика определения size
-        size = 30  # вот например простая логика
+        size = 2  # вот например простая логика
         return size
 
 
@@ -94,7 +96,7 @@ class VerySimpleJuniorStrat(bt.Strategy):
                 logger.info(f'Сигнал в Лонг!')
                 self.buy()
             self.entry_bar = len(self)
-        elif len(self) >= self.entry_bar + 2:  # Пора выходить, уже 2 бара сидим...
+        elif len(self) >= self.entry_bar + 2:  # Пора ли выходить из позиции
             logger.info(f'Сигнал на выход! Позиция-size: {self.getposition().size}, '
                         f'Позиция-price: {self.getposition().price}, '
                         f'бар входа: {self.entry_bar}, текущ. бар: {len(self)}')
@@ -148,15 +150,16 @@ def main():
     # dataname = 'QJSIM.LKOH'
     # dataname = 'QJSIM.SBER'
     # dataname = 'QJSIM.AFLT'
-    dataname = 'QJSIM.YDEX'
+    # dataname = 'QJSIM.ROSN'
     # dataname = 'QJSIM.T'
     # dataname = 'SBER'
     # dataname = 'EQRP_INFO.SBER'
     # dataname = 'CETS.SBER'
     # dataname = 'SPBFUT.MMM5'
-    # dataname = 'QJSIM.MMM5'
+    # dataname = 'QJSIM.MХM5'
     # dataname = 'SPBFUT.SiM5'
-    # dataname = ('CETS.KZTRUB_TOM')
+    dataname = 'SPBFUT.RIM5'
+    # dataname = 'CETS.KZTRUB_TOM'
 
 
     broker = store.getbroker() # экземпляр брокера берем из хранилища

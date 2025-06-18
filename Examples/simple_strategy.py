@@ -121,7 +121,8 @@ class VerySimpleJuniorStrat(bt.Strategy):
 
 
 def main():
-    # Переключатель записи лога в файл, True/False = Вкл/Выкл
+    # Переключатель записи лога в файл:
+    # True - пишем, False не пишем
     # Если True - лог пишем в файл app.log в папку Logs
     set_file_logging(True)
 

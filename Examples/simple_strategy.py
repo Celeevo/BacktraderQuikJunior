@@ -126,7 +126,7 @@ def main():
     # Переключатель записи лога в файл:
     # True - пишем, False не пишем
     # Если True - лог пишем в файл app.log в папку Logs
-    set_file_logging(True)
+    set_file_logging(False)
 
     # Создаем экземпляры cerebro и хранилища
     cerebro = bt.Cerebro(stdstats=False, quicknotify=True)
@@ -148,7 +148,7 @@ def main():
     # Закончили инвентаризацию
 
     # dataname = 'QJSIM.LKOH'
-    # dataname = 'QJSIM.SBER'
+    dataname = 'QJSIM.SBER'
     # dataname = 'QJSIM.AFLT'
     # dataname = 'QJSIM.ROSN'
     # dataname = 'QJSIM.T'
@@ -158,7 +158,7 @@ def main():
     # dataname = 'SPBFUT.MMM5'
     # dataname = 'QJSIM.MХM5'
     # dataname = 'SPBFUT.SiM5'
-    dataname = 'SPBFUT.RIM5'
+    # dataname = 'SPBFUT.RIM6'
     # dataname = 'CETS.KZTRUB_TOM'
 
 

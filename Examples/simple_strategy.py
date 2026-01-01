@@ -58,6 +58,59 @@ class CustomSizer(bt.Sizer):
         return size
 
 
+class My_Strat(bt.strategies.MA_CrossOver):
+    params = (
+        # period for the fast Moving Average
+        ('fast', 10),
+        # period for the slow moving average
+        ('slow', 30),
+        # moving average to use
+        ('_movav', bt.indicators.MovAv.SMA)
+    )
+
+    def __init__(self):
+        # Статус полученного бара: False - исторический, True - живой
+        self.is_live = False
+        # Логируем в файл стартовый cash и value
+        logger.debug(f'Стартовый CASH = {self.broker.getcash()}')
+        logger.debug(f'Стартовое VALUE = {self.broker.getvalue()}')
+        sma_fast = self.p._movav(period=self.p.fast)
+        sma_slow = self.p._movav(period=self.p.slow)
+
+        self.buysig = bt.indicators.CrossOver(sma_fast, sma_slow)
+
+    def next(self):
+        if not self.is_live: # выходим, если идет чтение истории
+            return
+
+        logger.info(
+            f'Новый бар! Мы в My_Strat.NEXT(). '
+            f'D-T-O-H-L-C-V: {bt.num2date(self.data.datetime[0])}, '
+            f'{self.data.open[0]}, {self.data.high[0]}, {self.data.low[0]}, '
+            f'{self.data.close[0]}, {self.data.volume[0]}')
+
+        if self.position.size:
+            if self.buysig < 0:
+                self.sell()
+
+        elif self.buysig > 0:
+            self.buy()
+
+    def notify_order(self, order):
+        if order.status == bt.Order.Completed:
+            # Сообщаем об исполнении ордера на вход в позицию
+            direction = 'покупку' if order.isbuy() else 'продажу'
+            logger.info(f'Ордер на {direction} {abs(order.executed.size)} бумаг '
+                        f'{order.data._dataname} выполнен по цене '
+                        f'{order.executed.price} за бумагу. Новая позиция '
+                        f'по инструменту: {self.getposition().size}')
+
+    def notify_data(self, data, status, *args, **kwargs):
+        # Изменение статуса приходящих баров
+        data_status = data._getstatusname(status)
+        logger.info(f'Источник данных: {data.p.dataname}, статус: {data_status}')
+        self.is_live = data_status == 'LIVE'
+
 class VerySimpleJuniorStrat(bt.Strategy):
     '''
     Вход в лонг: если пришло 2 бычьих свечи подряд -
@@ -176,7 +229,8 @@ def main():
     # запускаем движок
     cerebro.adddata(data)
     cerebro.addsizer(CustomSizer)
-    cerebro.addstrategy(VerySimpleJuniorStrat)
+    # cerebro.addstrategy(VerySimpleJuniorStrat)
+    cerebro.addstrategy(My_Strat)
     cerebro.run()
 
 

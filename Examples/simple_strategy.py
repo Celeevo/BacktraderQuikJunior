@@ -128,9 +128,6 @@ class TraceSharpeRatio(bt.analyzers.SharpeRatio):
     def notify_cashvalue(self, cash, value):
         trace(f"ANALYZER.notify_cashvalue cash={cash:.2f} value={value:.2f}  (strategy.py:612)")
 
-    def notify_fund(self, cash, value, fundvalue, shares):
-        trace(f"ANALYZER.notify_fund cash={cash:.2f} value={value:.2f} fundvalue={fundvalue:.2f} shares={shares:.6f}  (strategy.py:613)")
-
 
 class TraceStrat(bt.strategies.MA_CrossOver):
     params = (
@@ -148,10 +145,6 @@ class TraceStrat(bt.strategies.MA_CrossOver):
         trace("STRAT.__init__")
         super().__init__()  # создаст 2 SMA и CrossOver
 
-        # sma_fast = self.p._movav(period=self.p.fast)
-        # sma_slow = self.p._movav(period=self.p.slow)
-        #
-        # self.buysig = bt.indicators.CrossOver(sma_fast, sma_slow)
 
     def start(self):
         trace("STRAT.start")

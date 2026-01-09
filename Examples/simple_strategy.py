@@ -1,6 +1,8 @@
 from __future__ import (absolute_import, division, print_function, unicode_literals)
 from datetime import datetime
+import itertools
 import backtrader as bt
+import backtrader.indicators as btind
 from BacktraderQuikJunior.QJStore import QKStore
 from BacktraderQuikJunior.logger_config import logger, set_file_logging
 
@@ -57,27 +59,97 @@ class CustomSizer(bt.Sizer):
         size = 2  # вот например простая логика
         return size
 
+_STEP = itertools.count(1)
 
-class My_Strat(bt.strategies.MA_CrossOver):
+def trace(msg: str) -> None:
+    # flush=True чтобы порядок не “перемешивался” буферизацией
+    print(f"{next(_STEP):04d} | {msg}", flush=True)
+
+
+class TraceSMA(btind.SMA):
+    """
+        Эти методы вызываются из LineIterator._next():
+      - индикаторы дергаются раньше стратегии: lineiterator.py:262–263
+      - выбор next/nextstart/prenext для индикатора: lineiterator.py:279–284
+    """
+    def prenext(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"IND(SMA).prenext  period={self.p.period} dt={dt}  (lineiterator.py:284)")
+
+    def nextstart(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"IND(SMA).nextstart period={self.p.period} dt={dt} sma={self[0]:.6f}  (lineiterator.py:282)")
+
+    def next(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"IND(SMA).next     period={self.p.period} dt={dt} sma={self[0]:.6f}  (lineiterator.py:280)")
+
+class Trace_Strat(bt.strategies.MA_CrossOver):
     params = (
-        # period for the fast Moving Average
+        # period for the fast&slow Moving Average
         ('fast', 10),
-        # period for the slow moving average
         ('slow', 30),
-        # moving average to use
-        ('_movav', bt.indicators.MovAv.SMA)
+        ('_movav', TraceSMA)  # moving average to use
     )
 
     def __init__(self):
         # Статус полученного бара: False - исторический, True - живой
         self.is_live = False
-        # Логируем в файл стартовый cash и value
+        # Логируем в файл стартовый cash
         logger.debug(f'Стартовый CASH = {self.broker.getcash()}')
-        logger.debug(f'Стартовое VALUE = {self.broker.getvalue()}')
-        sma_fast = self.p._movav(period=self.p.fast)
-        sma_slow = self.p._movav(period=self.p.slow)
+        trace("STRAT.__init__")
+        super().__init__()  # создаст 2 SMA и CrossOver
 
-        self.buysig = bt.indicators.CrossOver(sma_fast, sma_slow)
+        # sma_fast = self.p._movav(period=self.p.fast)
+        # sma_slow = self.p._movav(period=self.p.slow)
+        #
+        # self.buysig = bt.indicators.CrossOver(sma_fast, sma_slow)
+
+    def start(self):
+        trace("STRAT.start")
+
+    def stop(self):
+        trace("STRAT.stop")
+
+    # ----- notify family (стратегия) -----
+
+    def notify_store(self, msg, *args, **kwargs):
+        trace(f"STRAT.notify_store msg={msg}")
+
+    def notify_data(self, data, status, *args, **kwargs):
+        trace(f"STRAT.notify_data status={data._getstatusname(status)}")
+        # Изменение статуса приходящих баров
+        data_status = data._getstatusname(status)
+        logger.info(f'Источник данных: {data.p.dataname}, статус: {data_status}')
+        self.is_live = data_status == 'LIVE'
+
+    def notify_order(self, order):
+        trace(f"STRAT.notify_order status={order.getstatusname()} ref={order.ref}  (strategy.py:590)")
+        if order.status == bt.Order.Completed:
+            # Сообщаем об исполнении ордера на вход в позицию
+            direction = 'покупку' if order.isbuy() else 'продажу'
+            logger.info(f'Ордер на {direction} {abs(order.executed.size)} бумаг '
+                        f'{order.data._dataname} выполнен по цене '
+                        f'{order.executed.price} за бумагу. Новая позиция '
+                        f'по инструменту: {self.getposition().size}')
+
+    def notify_trade(self, trade):
+        trace(f"STRAT.notify_trade pnl={trade.pnl:.2f} pnlcomm={trade.pnlcomm:.2f}  (strategy.py:596)")
+
+    def notify_cashvalue(self, cash, value):
+        trace(f"STRAT.notify_cashvalue cash={cash:.2f} value={value:.2f}  (strategy.py:609)")
+
+    # ----- next family (стратегия) -----
+
+    def prenext(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"STRAT.prenext dt={dt}  (lineiterator.py:275)")
+
+    def nextstart(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"STRAT.nextstart dt={dt}  (lineiterator.py:273)")
+        # На первом “полноценном” баре можно выполнить обычную логику
+        super().next()
 
     def next(self):
         if not self.is_live: # выходим, если идет чтение истории
@@ -88,91 +160,41 @@ class My_Strat(bt.strategies.MA_CrossOver):
             f'D-T-O-H-L-C-V: {bt.num2date(self.data.datetime[0])}, '
             f'{self.data.open[0]}, {self.data.high[0]}, {self.data.low[0]}, '
             f'{self.data.close[0]}, {self.data.volume[0]}')
+        dt = self.data.datetime.datetime(0)
+        trace(f"STRAT.next dt={dt}  (lineiterator.py:271)")
+        super().next()  # это и есть логика MA_CrossOver (buy/sell)
 
-        if self.position.size:
-            if self.buysig < 0:
-                self.sell()
-
-        elif self.buysig > 0:
-            self.buy()
-
-    def notify_order(self, order):
-        if order.status == bt.Order.Completed:
-            # Сообщаем об исполнении ордера на вход в позицию
-            direction = 'покупку' if order.isbuy() else 'продажу'
-            logger.info(f'Ордер на {direction} {abs(order.executed.size)} бумаг '
-                        f'{order.data._dataname} выполнен по цене '
-                        f'{order.executed.price} за бумагу. Новая позиция '
-                        f'по инструменту: {self.getposition().size}')
-
-    def notify_data(self, data, status, *args, **kwargs):
-        # Изменение статуса приходящих баров
-        data_status = data._getstatusname(status)
-        logger.info(f'Источник данных: {data.p.dataname}, статус: {data_status}')
-        self.is_live = data_status == 'LIVE'
-
-class VerySimpleJuniorStrat(bt.Strategy):
-    '''
-    Вход в лонг: если пришло 2 бычьих свечи подряд -
-    на третьей входим в лонг рыночным ордером.
-    Вход в шорт: если пришло 2 медвежьих свечи подряд -
-    на третьей входим в шорт рыночным ордером.
-    Выход из позиции: ждем 2 бара и выходим рыночным
-    ордером (self.close()).
-    '''
-    def __init__(self):
-        # Статус полученного бара: False - исторический, True - живой
-        self.is_live = False
-        self.entry_bar = 0  # Это бар входа в позицию
-        # Логируем в файл стартовый cash и value
-        logger.debug(f'Стартовый CASH = {self.broker.getcash()}')
-        logger.debug(f'Стартовое VALUE = {self.broker.getvalue()}')
-
-    def next(self):
-        if not self.is_live: # выходим, если идет чтение истории
-            return
-
-        logger.info(
-            f'Обработка живого бара в next(). '
-            f'D-T-O-H-L-C-V: {bt.num2date(self.data.datetime[0])}, '
-            f'{self.data.open[0]}, {self.data.high[0]}, {self.data.low[0]}, '
-            f'{self.data.close[0]}, {self.data.volume[0]}')
-
-        logger.debug(f'Работаем с источником данных: {self.data._dataname}, '
-                    f'текущая позиция: {self.getposition(self.data).size}')
-
-        if not self.position.size:
-            if self.data.close[0] <= self.data.open[0] and self.data.close[-1] <= self.data.open[-1]:
-                logger.info(f'Сигнал в Шорт!')
-                self.sell() # рыночный ордер в шорт
-            elif self.data.close[0] >= self.data.open[0] and self.data.close[-1] >= self.data.open[-1]:
-                logger.info(f'Сигнал в Лонг!')
-                self.buy()
-            self.entry_bar = len(self)
-        elif len(self) >= self.entry_bar + 2:  # Пора ли выходить из позиции
-            logger.info(f'Сигнал на выход! Позиция-size: {self.getposition().size}, '
-                        f'Позиция-price: {self.getposition().price}, '
-                        f'бар входа: {self.entry_bar}, текущ. бар: {len(self)}')
-            self.close() # Выход рыночным ордером
-
-    def notify_data(self, data, status, *args, **kwargs):
-        # Изменение статуса приходящих баров
-        data_status = data._getstatusname(status)
-        logger.info(f'Источник данных: {data.p.dataname}, статус: {data_status}')
-        self.is_live = data_status == 'LIVE'
-
-    def notify_order(self, order):
-        if order.status == bt.Order.Completed:
-            # Сообщаем об исполнении ордера на вход в позицию
-            direction = 'покупку' if order.isbuy() else 'продажу'
-            logger.info(f'Ордер на {direction} {abs(order.executed.size)} бумаг '
-                        f'{order.data._dataname} выполнен по цене '
-                        f'{order.executed.price} за бумагу. Новая позиция '
-                        f'по инструменту: {self.getposition().size}')
-
-
-    def stop(self):
-        super(VerySimpleJuniorStrat, self).stop()
+    # def next(self):
+    #     if not self.is_live: # выходим, если идет чтение истории
+    #         return
+    #
+    #     logger.info(
+    #         f'Новый бар! Мы в My_Strat.NEXT(). '
+    #         f'D-T-O-H-L-C-V: {bt.num2date(self.data.datetime[0])}, '
+    #         f'{self.data.open[0]}, {self.data.high[0]}, {self.data.low[0]}, '
+    #         f'{self.data.close[0]}, {self.data.volume[0]}')
+    #
+    #     if self.position.size:
+    #         if self.buysig < 0:
+    #             self.sell()
+    #
+    #     elif self.buysig > 0:
+    #         self.buy()
+    #
+    # def notify_order(self, order):
+    #     if order.status == bt.Order.Completed:
+    #         # Сообщаем об исполнении ордера на вход в позицию
+    #         direction = 'покупку' if order.isbuy() else 'продажу'
+    #         logger.info(f'Ордер на {direction} {abs(order.executed.size)} бумаг '
+    #                     f'{order.data._dataname} выполнен по цене '
+    #                     f'{order.executed.price} за бумагу. Новая позиция '
+    #                     f'по инструменту: {self.getposition().size}')
+    #
+    # def notify_data(self, data, status, *args, **kwargs):
+    #     # Изменение статуса приходящих баров
+    #     data_status = data._getstatusname(status)
+    #     logger.info(f'Источник данных: {data.p.dataname}, статус: {data_status}')
+    #     self.is_live = data_status == 'LIVE'
 
 
 def main():
@@ -230,7 +252,7 @@ def main():
     cerebro.adddata(data)
     cerebro.addsizer(CustomSizer)
     # cerebro.addstrategy(VerySimpleJuniorStrat)
-    cerebro.addstrategy(My_Strat)
+    cerebro.addstrategy(Trace_Strat)
     cerebro.run()
 
 

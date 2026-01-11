@@ -1,6 +1,8 @@
 from __future__ import (absolute_import, division, print_function, unicode_literals)
 from datetime import datetime
+import itertools
 import backtrader as bt
+import backtrader.indicators as btind
 from BacktraderQuikJunior.QJStore import QKStore
 from BacktraderQuikJunior.logger_config import logger, set_file_logging
 
@@ -57,58 +59,113 @@ class CustomSizer(bt.Sizer):
         size = 2  # вот например простая логика
         return size
 
+_STEP = itertools.count(1)
+IS_LIVE = False
 
-class VerySimpleJuniorStrat(bt.Strategy):
-    '''
-    Вход в лонг: если пришло 2 бычьих свечи подряд -
-    на третьей входим в лонг рыночным ордером.
-    Вход в шорт: если пришло 2 медвежьих свечи подряд -
-    на третьей входим в шорт рыночным ордером.
-    Выход из позиции: ждем 2 бара и выходим рыночным
-    ордером (self.close()).
-    '''
+def trace(msg: str) -> None:
+    # flush=True чтобы порядок не “перемешивался” буферизацией
+    if not IS_LIVE:
+        return
+    print(f"{next(_STEP):04d} | {msg}", flush=True)
+
+
+class TraceSMA(btind.SMA):
+    """
+        Эти методы вызываются из LineIterator._next():
+      - индикаторы дергаются раньше стратегии: lineiterator.py:262–263
+      - выбор next/nextstart/prenext для индикатора: lineiterator.py:279–284
+    """
+    def prenext(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"IND(SMA).prenext  period={self.p.period} dt={dt}  (lineiterator.py:284)")
+
+    def nextstart(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"IND(SMA).nextstart period={self.p.period} dt={dt} sma={self[0]:.6f}  (lineiterator.py:282)")
+
+    def next(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"IND(SMA).next     period={self.p.period} dt={dt} sma={self[0]:.6f}  (lineiterator.py:280)")
+
+
+class TraceTradeAnalyzer(bt.analyzers.TradeAnalyzer):
+    """
+    Безопасный анализатор для live: не требует broker.getvalue().
+    Нужен для демонстрации порядка вызовов:
+    - Analyzer.next() идёт после Strategy.next()
+    - notify_* анализатора вызывается из Strategy._notify()
+    """
+
+    def start(self):
+        trace("ANALYZER.start (TradeAnalyzer)")
+
+    def prenext(self):
+        dt = self.strategy.data.datetime.datetime(0)
+        trace(f"ANALYZER.prenext dt={dt}  (strategy._next_analyzers -> analyzer._prenext)")
+
+    def nextstart(self):
+        dt = self.strategy.data.datetime.datetime(0)
+        trace(f"ANALYZER.nextstart dt={dt}  (strategy._next_analyzers -> analyzer._nextstart)")
+
+    def next(self):
+        dt = self.strategy.data.datetime.datetime(0)
+        trace(f"ANALYZER.next dt={dt}  (analyzer.py:188 -> Analyzer.next())")
+
+        # пусть базовый TradeAnalyzer продолжает собирать статистику
+        return super().next()
+
+    def stop(self):
+        trace("ANALYZER.stop (TradeAnalyzer)")
+
+    # ----- notify family (анализатор) -----
+    # Будут вызываться только если есть исполнения (ордера/трейды)
+
+    def notify_order(self, order):
+        trace(f"ANALYZER.notify_order status={order.getstatusname()} ref={order.ref}  (strategy.py:593)")
+
+    def notify_trade(self, trade):
+        trace(f"ANALYZER.notify_trade pnl={trade.pnl:.2f} pnlcomm={trade.pnlcomm:.2f}  (strategy.py:599)")
+
+
+class TraceStrat(bt.strategies.MA_CrossOver):
+    params = (
+        # period for the fast&slow Moving Average
+        ('fast', 10),
+        ('slow', 20),
+        ('_movav', TraceSMA)  # moving average to use
+    )
+
     def __init__(self):
         # Статус полученного бара: False - исторический, True - живой
         self.is_live = False
-        self.entry_bar = 0  # Это бар входа в позицию
-        # Логируем в файл стартовый cash и value
-        logger.debug(f'Стартовый CASH = {self.broker.getcash()}')
-        logger.debug(f'Стартовое VALUE = {self.broker.getvalue()}')
+        # Логируем в файл стартовый cash
+        logger.info(f'Стартовый CASH = {self.broker.getcash()}')
+        trace("STRAT.__init__")
+        super().__init__()  # создаст 2 SMA и CrossOver
 
-    def next(self):
-        if not self.is_live: # выходим, если идет чтение истории
-            return
 
-        logger.info(
-            f'Обработка живого бара в next(). '
-            f'D-T-O-H-L-C-V: {bt.num2date(self.data.datetime[0])}, '
-            f'{self.data.open[0]}, {self.data.high[0]}, {self.data.low[0]}, '
-            f'{self.data.close[0]}, {self.data.volume[0]}')
+    def start(self):
+        trace("STRAT.start")
 
-        logger.debug(f'Работаем с источником данных: {self.data._dataname}, '
-                    f'текущая позиция: {self.getposition(self.data).size}')
+    def stop(self):
+        trace("STRAT.stop")
 
-        if not self.position.size:
-            if self.data.close[0] <= self.data.open[0] and self.data.close[-1] <= self.data.open[-1]:
-                logger.info(f'Сигнал в Шорт!')
-                self.sell() # рыночный ордер в шорт
-            elif self.data.close[0] >= self.data.open[0] and self.data.close[-1] >= self.data.open[-1]:
-                logger.info(f'Сигнал в Лонг!')
-                self.buy()
-            self.entry_bar = len(self)
-        elif len(self) >= self.entry_bar + 2:  # Пора ли выходить из позиции
-            logger.info(f'Сигнал на выход! Позиция-size: {self.getposition().size}, '
-                        f'Позиция-price: {self.getposition().price}, '
-                        f'бар входа: {self.entry_bar}, текущ. бар: {len(self)}')
-            self.close() # Выход рыночным ордером
+    # ----- notify family (стратегия) -----
+
+    def notify_store(self, msg, *args, **kwargs):
+        trace(f"STRAT.notify_store msg={msg}")
 
     def notify_data(self, data, status, *args, **kwargs):
+        global IS_LIVE
+        trace(f"STRAT.notify_data status={data._getstatusname(status)}")
         # Изменение статуса приходящих баров
         data_status = data._getstatusname(status)
         logger.info(f'Источник данных: {data.p.dataname}, статус: {data_status}')
-        self.is_live = data_status == 'LIVE'
+        # self.is_live = data_status == 'LIVE'
+        IS_LIVE = data_status == 'LIVE'
 
     def notify_order(self, order):
+        trace(f"STRAT.notify_order status={order.getstatusname()} ref={order.ref}  (strategy.py:590)")
         if order.status == bt.Order.Completed:
             # Сообщаем об исполнении ордера на вход в позицию
             direction = 'покупку' if order.isbuy() else 'продажу'
@@ -117,16 +174,41 @@ class VerySimpleJuniorStrat(bt.Strategy):
                         f'{order.executed.price} за бумагу. Новая позиция '
                         f'по инструменту: {self.getposition().size}')
 
+    def notify_trade(self, trade):
+        trace(f"STRAT.notify_trade pnl={trade.pnl:.2f} pnlcomm={trade.pnlcomm:.2f}  (strategy.py:596)")
 
-    def stop(self):
-        super(VerySimpleJuniorStrat, self).stop()
+    def notify_cashvalue(self, cash, value):
+        trace(f"STRAT.notify_cashvalue cash={cash:.2f} value={value:.2f}  (strategy.py:609)")
+
+    # ----- next family (стратегия) -----
+
+    def prenext(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"STRAT.prenext dt={dt}  (lineiterator.py:275)")
+
+    def nextstart(self):
+        dt = self.data.datetime.datetime(0)
+        trace(f"STRAT.nextstart dt={dt}  (lineiterator.py:273)")
+        # На первом “полноценном” баре можно выполнить обычную логику
+        super().next()
+
+    def next(self):
+        # if not self.is_live: # выходим, если идет чтение истории
+        if not IS_LIVE: # выходим, если идет чтение истории
+            return
+
+        trace(f'STRAT.next '
+            f'D-T-O-H-L-C-V: {bt.num2date(self.data.datetime[0])}, '
+            f'{self.data.open[0]}, {self.data.high[0]}, {self.data.low[0]}, '
+            f'{self.data.close[0]}, {self.data.volume[0]}')
+        super().next()  # это и есть логика MA_CrossOver (buy/sell)
 
 
 def main():
     # Переключатель записи лога в файл:
     # True - пишем, False не пишем
     # Если True - лог пишем в файл app.log в папку Logs
-    set_file_logging(True)
+    set_file_logging(False)
 
     # Создаем экземпляры cerebro и хранилища
     cerebro = bt.Cerebro(stdstats=False, quicknotify=True)
@@ -148,7 +230,7 @@ def main():
     # Закончили инвентаризацию
 
     # dataname = 'QJSIM.LKOH'
-    # dataname = 'QJSIM.SBER'
+    dataname = 'QJSIM.SBER'
     # dataname = 'QJSIM.AFLT'
     # dataname = 'QJSIM.ROSN'
     # dataname = 'QJSIM.T'
@@ -158,7 +240,7 @@ def main():
     # dataname = 'SPBFUT.MMM5'
     # dataname = 'QJSIM.MХM5'
     # dataname = 'SPBFUT.SiM5'
-    dataname = 'SPBFUT.RIM5'
+    # dataname = 'SPBFUT.RIM6'
     # dataname = 'CETS.KZTRUB_TOM'
 
 
@@ -176,7 +258,9 @@ def main():
     # запускаем движок
     cerebro.adddata(data)
     cerebro.addsizer(CustomSizer)
-    cerebro.addstrategy(VerySimpleJuniorStrat)
+    # cerebro.addstrategy(VerySimpleJuniorStrat)
+    cerebro.addstrategy(TraceStrat)
+    cerebro.addanalyzer(TraceTradeAnalyzer, _name="tta")
     cerebro.run()
 
 

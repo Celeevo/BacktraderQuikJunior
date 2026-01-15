@@ -1,5 +1,5 @@
 from __future__ import (absolute_import, division, print_function, unicode_literals)
-from datetime import datetime
+from datetime import datetime, timedelta
 import itertools
 import backtrader as bt
 import backtrader.indicators as btind
@@ -64,8 +64,8 @@ IS_LIVE = False
 
 def trace(msg: str) -> None:
     # flush=True чтобы порядок не “перемешивался” буферизацией
-    if not IS_LIVE:
-        return
+    # if not IS_LIVE:
+    #     return
     print(f"{next(_STEP):04d} | {msg}", flush=True)
 
 
@@ -248,7 +248,8 @@ def main():
     # Проверяем запрошенный источник данных на его наличие в QUIK Junior
     broker.check_data_names(dataname)
 
-    fromdate = datetime.today().date() # с какой даты берем данные
+    fromdate = datetime.today() - timedelta(minutes=30) # с какой даты берем данные
+    print(fromdate)
     # Будем работать на тайм-фрейме 1 минута
     data = store.getdata(dataname=dataname, timeframe=bt.TimeFrame.Minutes,
                          compression=1, fromdate=fromdate, live_bars=True)
